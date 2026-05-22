@@ -6,16 +6,17 @@
     "node": "20.x"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate deploy",
-    "db:push": "prisma db push",
-    "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
-  },
+  "postinstall": "prisma generate",
+  "dev": "next dev",
+  "build": "next build",
+  "start": "next start",
+  "lint": "next lint",
+  "db:generate": "prisma generate",
+  "db:migrate": "prisma migrate deploy",
+  "db:push": "prisma db push",
+  "db:seed": "prisma db seed",
+  "db:studio": "prisma studio"
+},
   "dependencies": {
     "@prisma/client": "^5.10.2",
     "@radix-ui/react-slot": "^1.0.2",
