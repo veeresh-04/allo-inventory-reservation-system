@@ -2,6 +2,8 @@
 
 A multi-warehouse inventory and reservation platform built with Next.js App Router, TypeScript, Prisma, hosted Postgres, and optional Upstash Redis.
 
+**Live Demo:** https://allo-inventory-reservation-system.vercel.app/products
+
 ## What It Implements
 
 - Product and warehouse data models.
@@ -34,23 +36,40 @@ Set these values:
 
 | Variable | Description |
 | --- | --- |
-| `DATABASE_URL` | Hosted Postgres connection string from Supabase, Neon, Railway, or equivalent. |
+| `DATABASE_URL` | Pooled Postgres connection string from Neon, Supabase, Railway, or equivalent. |
+| `DATABASE_URL_UNPOOLED` | Direct (non-pooled) Postgres connection string. Required by Prisma for migrations. On Neon, this is the same host without the `-pooler` suffix. |
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL. Optional locally. |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token. Optional locally. |
 | `CRON_SECRET` | Secret used to protect the cron endpoint in production. |
 
 Redis is optional for local development. If it is not configured, the app still relies on Postgres row locks for reservation correctness.
 
-### 3. Prepare the database
+### 3. Configure Prisma schema
+
+Make sure `prisma/schema.prisma` has both URLs configured:
+
+```prisma
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
+}
+```
+
+The `directUrl` is required when connection pooling is enabled (e.g. Neon pooler) so that Prisma migrations and `db push` use a direct connection.
+
+### 4. Prepare the database
 
 ```bash
 npm run db:push
 npm run db:seed
 ```
 
+> **Note:** If port 5432 is blocked on your network (common on college or office WiFi), either switch to a mobile hotspot or use the pooler URL for both `DATABASE_URL` and `DATABASE_URL_UNPOOLED` temporarily.
+
 The seed creates 6 products, 3 warehouses, and stock records for each product and warehouse pair.
 
-### 4. Start the app
+### 5. Start the app
 
 ```bash
 npm run dev
@@ -63,10 +82,34 @@ Open `http://localhost:3000`.
 Use:
 
 - Vercel for the Next.js app.
-- Supabase, Neon, Railway, or another hosted Postgres provider for `DATABASE_URL`.
+- Neon, Supabase, Railway, or another hosted Postgres provider for `DATABASE_URL`.
 - Upstash Redis for the distributed lock and idempotency cache.
 
-`vercel.json` schedules:
+### Vercel Build Command
+
+In **Vercel → Project → Settings → General → Build & Development Settings**, set the Build Command to:
+
+```
+prisma generate && next build
+```
+
+This is required because Vercel caches `node_modules` and does not re-run `postinstall` on cached builds. Running `prisma generate` explicitly ensures the Prisma Client is always up to date.
+
+### Environment Variables
+
+Set all five variables in **Vercel → Project → Settings → Environment Variables**:
+
+| Variable | Description |
+| --- | --- |
+| `DATABASE_URL` | Pooled Postgres URL (used at runtime) |
+| `DATABASE_URL_UNPOOLED` | Direct Postgres URL (used by Prisma migrations) |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token |
+| `CRON_SECRET` | Secret checked by the cron endpoint |
+
+### Cron Schedule
+
+`vercel.json` schedules the expiry cleanup to run every minute:
 
 ```json
 {
@@ -75,7 +118,7 @@ Use:
 }
 ```
 
-Set the same env vars in Vercel. `CRON_SECRET` is checked by `/api/cron/release-expired` in production.
+> **Note:** Vercel Hobby plan only supports a daily cron (`0 0 * * *`). The every-minute schedule requires a paid Vercel plan. On Hobby, lazy cleanup on product reads keeps stock accurate in the meantime.
 
 ## Concurrency Model
 
@@ -106,11 +149,9 @@ The available stock check and `reservedUnits` increment happen inside the same t
 Expired reservations are released in two ways:
 
 - Primary cleanup: product reads call `releaseExpiredReservations()` before stock is returned. This keeps stock accurate whenever shoppers view the catalog, even on Vercel Hobby.
-- Housekeeping cleanup: Vercel Cron calls `GET /api/cron/release-expired` once per day. The daily schedule is compatible with Vercel Hobby limits; on a paid plan it can be changed to `* * * * *` for every-minute cleanup.
+- Housekeeping cleanup: Vercel Cron calls `GET /api/cron/release-expired` on the configured schedule. On a paid Vercel plan this runs every minute (`* * * * *`); on Hobby it runs daily as a backstop.
 
 The cleanup uses one atomic `UPDATE ... RETURNING` query to move expired `PENDING` reservations to `RELEASED`, then decrements the matching inventory rows in the same transaction. This prevents duplicate cleanup work from double-releasing the same reservation if cron and a user-triggered read happen at the same time.
-
-In the deployed Hobby setup, stock is corrected as soon as a product read happens, with the daily cron as a backstop for quiet periods.
 
 ## Idempotency
 
