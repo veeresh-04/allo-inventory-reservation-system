@@ -13,7 +13,7 @@ A multi-warehouse inventory and reservation platform built with Next.js App Rout
 - `POST /api/reservations/:id/confirm`.
 - `POST /api/reservations/:id/release`.
 - Product listing UI, reservation checkout UI, live countdown, and visible 409/410 errors.
-- Vercel Cron plus lazy cleanup for expired reservations.
+- Lazy cleanup plus Vercel Cron housekeeping for expired reservations.
 - Bonus idempotency support for reserve and confirm.
 
 ## Running Locally
@@ -105,12 +105,12 @@ The available stock check and `reservedUnits` increment happen inside the same t
 
 Expired reservations are released in two ways:
 
-- Primary cleanup: Vercel Cron calls `GET /api/cron/release-expired` every minute.
-- Lazy cleanup: product reads call `releaseExpiredReservations()` before stock is returned.
+- Primary cleanup: product reads call `releaseExpiredReservations()` before stock is returned. This keeps stock accurate whenever shoppers view the catalog, even on Vercel Hobby.
+- Housekeeping cleanup: Vercel Cron calls `GET /api/cron/release-expired` once per day. The daily schedule is compatible with Vercel Hobby limits; on a paid plan it can be changed to `* * * * *` for every-minute cleanup.
 
 The cleanup uses one atomic `UPDATE ... RETURNING` query to move expired `PENDING` reservations to `RELEASED`, then decrements the matching inventory rows in the same transaction. This prevents duplicate cleanup work from double-releasing the same reservation if cron and a user-triggered read happen at the same time.
 
-Maximum stock limbo is about one minute under normal cron operation, and usually shorter when product pages are being read.
+In the deployed Hobby setup, stock is corrected as soon as a product read happens, with the daily cron as a backstop for quiet periods.
 
 ## Idempotency
 
